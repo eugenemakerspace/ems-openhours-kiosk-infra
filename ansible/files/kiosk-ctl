@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+#
+# kiosk-ctl — Control a Servo kiosk instance via WebDriver
+#
+# Usage:
+#   kiosk-ctl navigate <url>       Navigate to a URL
+#   kiosk-ctl reload               Reload the current page
+#   kiosk-ctl back                 Go back in history
+#   kiosk-ctl forward              Go forward in history
+#   kiosk-ctl url                  Print the current URL
+#   kiosk-ctl title                Print the page title
+#   kiosk-ctl js <script>          Execute JavaScript synchronously
+#   kiosk-ctl screenshot <file>    Save a screenshot (PNG)
+#   kiosk-ctl status               Check if the kiosk is responsive
+#   kiosk-ctl session              Print the current session ID
+#   kiosk-ctl new-session          Force-create a new WebDriver session
+#
+# Environment:
+#   KIOSK_WEBDRIVER_PORT  WebDriver port (default: 4444)
+#   KIOSK_SESSION_FILE    Session ID file (default: /tmp/kiosk-session-id)
+
+set -euo pipefail
+
+WEBDRIVER_PORT="${KIOSK_WEBDRIVER_PORT:-4444}"
+WEBDRIVER_URL="http://127.0.0.1:${WEBDRIVER_PORT}"
+SESSION_FILE="${KIOSK_SESSION_FILE:-/tmp/kiosk-session-id}"
+
+# --- helpers ----------------------------------------------------------------
+
+die() {
+    echo "kiosk-ctl: error: $*" >&2
+    exit 1
+}
+
+usage() {
+    sed -n '3,/^$/{ s/^# \?//; p }' "$0"
+    exit 0
+}
+
+# Make a WebDriver request. Args: METHOD PATH [JSON_BODY]
+wd_request() {
+    local method="$1" path="$2" body="${3:-}"
+    local curl_args=(-s -f -X "$method" "${WEBDRIVER_URL}${path}")
+    if [[ -n "$body" ]]; then
+        curl_args+=(-H 'Content-Type: application/json' -d "$body")
+    fi
+    curl "${curl_args[@]}" 2>/dev/null
+}
+
+# Extract a JSON string value. Args: JSON KEY
+json_value() {
+    # Use python3 if available, fall back to basic grep/sed
+    if command -v python3 &>/dev/null; then
+        echo "$1" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d${2})"
+    else
+        # Fragile fallback — works for simple flat responses
+        echo "$1" | grep -o "\"${2}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed 's/.*: *"//;s/"$//'
+    fi
+}
+
+# --- session management -----------------------------------------------------
+
+# Get or create a WebDriver session, print the session ID.
+ensure_session() {
+    # Return cached session if it's still valid
+    if [[ -f "$SESSION_FILE" ]]; then
+        local sid
+        sid="$(cat "$SESSION_FILE")"
+        if wd_request GET "/session/${sid}/url" &>/dev/null; then
+            echo "$sid"
+            return
+        fi
+        # Stale session — remove and create a new one
+        rm -f "$SESSION_FILE"
+    fi
+    create_session
+}
+
+create_session() {
+    local resp
+    resp="$(wd_request POST /session '{"capabilities": {}}')" \
+        || die "could not create WebDriver session — is Servo running with --webdriver=${WEBDRIVER_PORT}?"
+    local sid
+    sid="$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['value']['sessionId'])" 2>/dev/null)" \
+        || die "unexpected response from WebDriver: ${resp}"
+    echo "$sid" > "$SESSION_FILE"
+    echo "$sid"
+}
+
+get_session() {
+    [[ -f "$SESSION_FILE" ]] || die "no active session (run a command first, or use 'new-session')"
+    cat "$SESSION_FILE"
+}
+
+# --- commands ----------------------------------------------------------------
+
+cmd_navigate() {
+    [[ -n "${1:-}" ]] || die "usage: kiosk-ctl navigate <url>"
+    local sid
+    sid="$(ensure_session)"
+    wd_request POST "/session/${sid}/url" "{\"url\": \"$1\"}" >/dev/null
+    echo "Navigated to $1"
+}
+
+cmd_reload() {
+    local sid
+    sid="$(ensure_session)"
+    wd_request POST "/session/${sid}/refresh" '{}' >/dev/null
+    echo "Page reloaded"
+}
+
+cmd_back() {
+    local sid
+    sid="$(ensure_session)"
+    wd_request POST "/session/${sid}/back" '{}' >/dev/null
+    echo "Navigated back"
+}
+
+cmd_forward() {
+    local sid
+    sid="$(ensure_session)"
+    wd_request POST "/session/${sid}/forward" '{}' >/dev/null
+    echo "Navigated forward"
+}
+
+cmd_url() {
+    local sid resp
+    sid="$(ensure_session)"
+    resp="$(wd_request GET "/session/${sid}/url")"
+    python3 -c "import sys,json; print(json.load(sys.stdin)['value'])" <<< "$resp"
+}
+
+cmd_title() {
+    local sid resp
+    sid="$(ensure_session)"
+    resp="$(wd_request GET "/session/${sid}/title")"
+    python3 -c "import sys,json; print(json.load(sys.stdin)['value'])" <<< "$resp"
+}
+
+cmd_js() {
+    [[ -n "${1:-}" ]] || die "usage: kiosk-ctl js <script>"
+    local sid resp
+    sid="$(ensure_session)"
+    # Build JSON payload with python to handle escaping
+    local payload
+    payload="$(python3 -c "import json; print(json.dumps({'script': '''$1''', 'args': []}))")" \
+        || die "failed to build JSON payload"
+    resp="$(wd_request POST "/session/${sid}/execute/sync" "$payload")"
+    python3 -c "import sys,json; v=json.load(sys.stdin)['value']; print(v if v is not None else '')" <<< "$resp"
+}
+
+cmd_screenshot() {
+    local outfile="${1:-screenshot.png}"
+    local sid resp
+    sid="$(ensure_session)"
+    resp="$(wd_request GET "/session/${sid}/screenshot")"
+    python3 -c "
+import sys, json, base64
+data = json.load(sys.stdin)['value']
+with open('${outfile}', 'wb') as f:
+    f.write(base64.b64decode(data))
+" <<< "$resp"
+    echo "Screenshot saved to ${outfile}"
+}
+
+cmd_status() {
+    local sid
+    if sid="$(ensure_session)" 2>/dev/null; then
+        local url
+        url="$(cmd_url)"
+        echo "Kiosk is running (session: ${sid})"
+        echo "Current URL: ${url}"
+    else
+        echo "Kiosk is not responding"
+        exit 1
+    fi
+}
+
+cmd_session() {
+    get_session
+}
+
+cmd_new_session() {
+    rm -f "$SESSION_FILE"
+    local sid
+    sid="$(create_session)"
+    echo "Created new session: ${sid}"
+}
+
+# --- main --------------------------------------------------------------------
+
+[[ $# -ge 1 ]] || usage
+
+command="$1"
+shift
+
+case "$command" in
+    navigate)    cmd_navigate "$@" ;;
+    reload)      cmd_reload ;;
+    back)        cmd_back ;;
+    forward)     cmd_forward ;;
+    url)         cmd_url ;;
+    title)       cmd_title ;;
+    js)          cmd_js "$@" ;;
+    screenshot)  cmd_screenshot "$@" ;;
+    status)      cmd_status ;;
+    session)     cmd_session ;;
+    new-session) cmd_new_session ;;
+    help|-h|--help) usage ;;
+    *)           die "unknown command: $command (try 'kiosk-ctl help')" ;;
+esac

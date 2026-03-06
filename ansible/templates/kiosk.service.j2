@@ -1,0 +1,43 @@
+[Unit]
+Description=Servo Kiosk Browser
+Documentation=https://servo.org
+After=multi-user.target seatd.service ems-openhours.service
+Requires=seatd.service ems-openhours.service
+ConditionPathExists={{ servo_install_dir }}/servo
+
+[Service]
+Type=simple
+User={{ kiosk_user }}
+Group={{ kiosk_user }}
+
+# Ensure XDG_RUNTIME_DIR exists (logind won't create it for system users)
+RuntimeDirectory=kiosk
+Environment=XDG_RUNTIME_DIR=/run/kiosk
+Environment=LIBSEAT_BACKEND=seatd
+Environment=WLR_LIBINPUT_NO_DEVICES=1
+Environment=WLR_NO_HARDWARE_CURSORS=1
+Environment=SURFMAN_FORCE_GLES=1
+
+# Kiosk configuration
+Environment=KIOSK_URL={{ kiosk_url }}
+Environment=KIOSK_WEBDRIVER_PORT={{ webdriver_port }}
+Environment=SERVO_BIN={{ servo_install_dir }}/servo
+
+# cage runs Servo fullscreen on a dedicated TTY
+ExecStart=/usr/bin/cage -- {{ servo_install_dir }}/servo \
+    --webdriver={{ webdriver_port }} \
+    --no-native-titlebar \
+    {{ kiosk_url }}
+
+# Restart on crash — 5s delay to avoid rapid restart loops
+Restart=on-failure
+RestartSec=5
+
+# Run on TTY7 (typical for graphical sessions)
+TTYPath=/dev/tty7
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,226 @@
+---
+# Servo Kiosk Provisioning Playbook
+#
+# Provisions a Raspberry Pi 4 as a fullscreen kiosk displaying
+# the EMS Open Hours dashboard via Servo browser.
+#
+# Usage:
+#   ansible-playbook -i inventory.ini playbook.yml
+#
+# To deploy just the web content:
+#   ansible-playbook -i inventory.ini playbook.yml --tags content
+#
+# To deploy just the servo binary:
+#   ansible-playbook -i inventory.ini playbook.yml --tags servo
+
+- name: Provision EMS kiosk
+  hosts: kiosk
+  become: true
+
+  vars:
+    kiosk_user: kiosk
+    servo_install_dir: /opt/servo
+    web_content_dir: /opt/ems-openhours
+    kiosk_url: "http://127.0.0.1:{{ http_port }}"
+    http_port: 8080
+    webdriver_port: 4444
+
+    # Paths on the Pi where servo is built
+    servo_src_dir: /home/pi/dashboard/servo
+    servo_bin_src: "{{ servo_src_dir }}/target/release/servo"
+    servo_resources_src: "{{ servo_src_dir }}/resources"
+
+    # Git repo for the web content
+    web_content_repo: https://github.com/eugenemakerspace/openhours-signage.git
+    web_content_version: main
+
+  tasks:
+    # ── System packages ──────────────────────────────────────────────
+
+    - name: Install required packages
+      apt:
+        name:
+          - cage
+          - seatd
+          - curl
+          - python3
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      tags: [packages]
+
+    # ── WiFi reliability ─────────────────────────────────────────────
+
+    - name: Disable wifi power management (NetworkManager)
+      copy:
+        dest: /etc/NetworkManager/conf.d/wifi-powersave-off.conf
+        content: |
+          [connection]
+          wifi.powersave = 2
+        mode: "0644"
+      notify: restart networkmanager
+      tags: [wifi]
+
+    # ── Display manager ──────────────────────────────────────────────
+
+    - name: Disable lightdm (conflicts with cage for DRM master)
+      systemd:
+        name: lightdm
+        enabled: false
+        state: stopped
+      failed_when: false
+      tags: [display]
+
+    # ── Kiosk user ───────────────────────────────────────────────────
+
+    - name: Create kiosk system user
+      user:
+        name: "{{ kiosk_user }}"
+        system: true
+        create_home: true
+        shell: /usr/sbin/nologin
+        groups:
+          - tty
+          - video
+          - render
+        append: true
+      tags: [user]
+
+    # ── Screen blanking ──────────────────────────────────────────────
+
+    - name: Ensure logind conf directory exists
+      file:
+        path: /etc/systemd/logind.conf.d
+        state: directory
+        mode: "0755"
+      tags: [display]
+
+    - name: Disable idle action (logind)
+      copy:
+        dest: /etc/systemd/logind.conf.d/kiosk-no-idle.conf
+        content: |
+          [Login]
+          IdleAction=ignore
+        mode: "0644"
+      tags: [display]
+
+    # ── Servo binary ─────────────────────────────────────────────────
+
+    - name: Create servo install directory
+      file:
+        path: "{{ servo_install_dir }}"
+        state: directory
+        mode: "0755"
+      tags: [servo]
+
+    - name: Deploy servo binary
+      copy:
+        src: "{{ servo_bin_src }}"
+        dest: "{{ servo_install_dir }}/servo"
+        mode: "0755"
+        remote_src: true
+      notify: restart kiosk
+      tags: [servo]
+
+    - name: Deploy servo resources
+      copy:
+        src: "{{ servo_resources_src }}/"
+        dest: "{{ servo_install_dir }}/resources/"
+        remote_src: true
+      tags: [servo]
+
+    # ── Web content ──────────────────────────────────────────────────
+
+    - name: Install git
+      apt:
+        name: git
+        state: present
+      tags: [content]
+
+    - name: Deploy web content
+      git:
+        repo: "{{ web_content_repo }}"
+        dest: "{{ web_content_dir }}"
+        version: "{{ web_content_version }}"
+        force: true
+      notify: restart ems-openhours
+      tags: [content]
+
+    # ── kiosk-ctl ────────────────────────────────────────────────────
+
+    - name: Install kiosk-ctl
+      copy:
+        src: files/kiosk-ctl
+        dest: /usr/local/bin/kiosk-ctl
+        mode: "0755"
+      tags: [kiosk-ctl]
+
+    # ── Systemd services ─────────────────────────────────────────────
+
+    - name: Enable seatd
+      systemd:
+        name: seatd
+        enabled: true
+        state: started
+      tags: [services]
+
+    - name: Install ems-openhours service
+      template:
+        src: templates/ems-openhours.service.j2
+        dest: /etc/systemd/system/ems-openhours.service
+        mode: "0644"
+      notify:
+        - reload systemd
+        - restart ems-openhours
+      tags: [services]
+
+    - name: Install kiosk service
+      template:
+        src: templates/kiosk.service.j2
+        dest: /etc/systemd/system/kiosk.service
+        mode: "0644"
+      notify:
+        - reload systemd
+        - restart kiosk
+      tags: [services]
+
+    - name: Enable services
+      systemd:
+        name: "{{ item }}"
+        enabled: true
+        daemon_reload: true
+      loop:
+        - ems-openhours
+        - kiosk
+      tags: [services]
+
+    - name: Start services
+      systemd:
+        name: "{{ item }}"
+        state: started
+      loop:
+        - ems-openhours
+        - kiosk
+      tags: [services]
+
+  # ── Handlers ─────────────────────────────────────────────────────
+
+  handlers:
+    - name: reload systemd
+      systemd:
+        daemon_reload: true
+
+    - name: restart networkmanager
+      systemd:
+        name: NetworkManager
+        state: restarted
+
+    - name: restart ems-openhours
+      systemd:
+        name: ems-openhours
+        state: restarted
+
+    - name: restart kiosk
+      systemd:
+        name: kiosk
+        state: restarted

@@ -1,0 +1,6 @@
+.cargo-home/
+.rustup-home/
+.direnv/
+servo
+.claude
+error.log
