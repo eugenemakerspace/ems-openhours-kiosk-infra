@@ -24,11 +24,16 @@
     kiosk_url: "http://127.0.0.1:{{ http_port }}"
     http_port: 8080
     webdriver_port: 4444
+    display_rotation: 90
 
     # Paths on the Pi where servo is built
     servo_src_dir: /home/pi/dashboard/servo
     servo_bin_src: "{{ servo_src_dir }}/target/release/servo"
     servo_resources_src: "{{ servo_src_dir }}/resources"
+
+    # Google Calendar API key (required — pass via --extra-vars or environment)
+    # e.g.: ansible-playbook playbook.yml -e google_api_key=$GOOGLE_API_KEY
+    google_api_key: "{{ lookup('env', 'GOOGLE_API_KEY') }}"
 
     # Git repo for the web content
     web_content_repo: https://github.com/eugenemakerspace/openhours-signage.git
@@ -144,6 +149,13 @@
         version: "{{ web_content_version }}"
         force: true
       notify: restart ems-openhours
+      tags: [content]
+
+    - name: Deploy API key config
+      template:
+        src: templates/config.local.js.j2
+        dest: "{{ web_content_dir }}/js/config.local.js"
+        mode: "0644"
       tags: [content]
 
     # ── kiosk-ctl ────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-# ems-opensign-infra
+# ems-openhours-kiosk-infra
 
 Ansible provisioning for a Raspberry Pi 4 kiosk that displays the [Eugene Makerspace](https://www.eugenemakerspace.com/) Open Hours dashboard using [Servo](https://servo.org/) browser.
 

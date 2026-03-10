@@ -24,10 +24,8 @@ Environment=KIOSK_WEBDRIVER_PORT={{ webdriver_port }}
 Environment=SERVO_BIN={{ servo_install_dir }}/servo
 
 # cage runs Servo fullscreen on a dedicated TTY
-ExecStart=/usr/bin/cage -- {{ servo_install_dir }}/servo \
-    --webdriver={{ webdriver_port }} \
-    --no-native-titlebar \
-    {{ kiosk_url }}
+# wlr-randr applies rotation after cage has started
+ExecStart=/bin/sh -c '(sleep 3 && wlr-randr --output HDMI-A-1 --transform {{ display_rotation }}) & exec /usr/bin/cage -- {{ servo_install_dir }}/servo --webdriver={{ webdriver_port }} --no-native-titlebar {{ kiosk_url }}'
 
 # Restart on crash — 5s delay to avoid rapid restart loops
 Restart=on-failure
