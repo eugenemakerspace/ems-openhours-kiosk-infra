@@ -24,7 +24,9 @@
     kiosk_url: "http://127.0.0.1:{{ http_port }}"
     http_port: 8080
     webdriver_port: 4444
+    marionette_port: 2828
     display_rotation: 90
+    geckodriver_version: "0.36.0"
 
     # Paths on the Pi where servo is built
     servo_src_dir: /home/pi/dashboard/servo
@@ -49,10 +51,52 @@
           - seatd
           - curl
           - python3
-          - firefox-esr
         state: present
         update_cache: true
         cache_valid_time: 3600
+      tags: [packages]
+
+    - name: Ensure keyrings directory exists
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+      tags: [packages]
+
+    - name: Download Mozilla APT signing key
+      get_url:
+        url: https://packages.mozilla.org/apt/repo-signing-key.gpg
+        dest: /etc/apt/keyrings/packages.mozilla.org.gpg
+        mode: "0644"
+      tags: [packages]
+
+    - name: Add Mozilla APT repository
+      apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.gpg] https://packages.mozilla.org/apt mozilla main"
+        filename: mozilla
+        state: present
+      tags: [packages]
+
+    - name: Install Firefox from Mozilla repo
+      apt:
+        name:
+          - firefox
+        state: present
+        update_cache: true
+      tags: [packages]
+
+    - name: Install geckodriver
+      get_url:
+        url: "https://github.com/mozilla/geckodriver/releases/download/v{{ geckodriver_version }}/geckodriver-v{{ geckodriver_version }}-linux-aarch64.tar.gz"
+        dest: /tmp/geckodriver.tar.gz
+      tags: [packages]
+
+    - name: Extract geckodriver to /usr/local/bin
+      unarchive:
+        src: /tmp/geckodriver.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        mode: "0755"
       tags: [packages]
 
     # ── WiFi reliability ─────────────────────────────────────────────

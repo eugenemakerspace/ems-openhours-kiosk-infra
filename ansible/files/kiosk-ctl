@@ -78,8 +78,8 @@ ensure_session() {
 
 create_session() {
     local resp
-    resp="$(wd_request POST /session '{"capabilities": {}}')" \
-        || die "could not create WebDriver session — is Servo running with --webdriver=${WEBDRIVER_PORT}?"
+    resp="$(wd_request POST /session '{"capabilities": {"alwaysMatch": {"browserName": "firefox"}}}')" \
+        || die "could not create WebDriver session — is geckodriver running on port ${WEBDRIVER_PORT}?"
     local sid
     sid="$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['value']['sessionId'])" 2>/dev/null)" \
         || die "unexpected response from WebDriver: ${resp}"

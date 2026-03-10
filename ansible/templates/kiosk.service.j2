@@ -20,7 +20,7 @@ Environment=KIOSK_URL={{ kiosk_url }}
 
 # cage runs Firefox in kiosk mode on a dedicated TTY
 # wlr-randr applies rotation after cage has started
-ExecStart=/bin/sh -c '(sleep 3 && wlr-randr --output HDMI-A-1 --transform {{ display_rotation }}) & exec /usr/bin/cage -- /usr/bin/firefox-esr --kiosk {{ kiosk_url }}'
+ExecStart=/bin/sh -c '(sleep 3 && wlr-randr --output HDMI-A-1 --transform {{ display_rotation }}) & (sleep 5 && geckodriver --port {{ webdriver_port }} --marionette-port {{ marionette_port }} --connect-existing) & exec /usr/bin/cage -- /usr/bin/firefox --kiosk --marionette --marionette-port {{ marionette_port }} {{ kiosk_url }}'
 
 # Restart on crash — 5s delay to avoid rapid restart loops
 Restart=on-failure
