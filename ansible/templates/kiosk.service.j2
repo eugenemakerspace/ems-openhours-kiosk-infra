@@ -1,9 +1,7 @@
 [Unit]
-Description=Servo Kiosk Browser
-Documentation=https://servo.org
+Description=Kiosk Browser
 After=multi-user.target seatd.service ems-openhours.service
 Requires=seatd.service ems-openhours.service
-ConditionPathExists={{ servo_install_dir }}/servo
 
 [Service]
 Type=simple
@@ -16,16 +14,13 @@ Environment=XDG_RUNTIME_DIR=/run/kiosk
 Environment=LIBSEAT_BACKEND=seatd
 Environment=WLR_LIBINPUT_NO_DEVICES=1
 Environment=WLR_NO_HARDWARE_CURSORS=1
-Environment=SURFMAN_FORCE_GLES=1
 
 # Kiosk configuration
 Environment=KIOSK_URL={{ kiosk_url }}
-Environment=KIOSK_WEBDRIVER_PORT={{ webdriver_port }}
-Environment=SERVO_BIN={{ servo_install_dir }}/servo
 
-# cage runs Servo fullscreen on a dedicated TTY
+# cage runs Firefox in kiosk mode on a dedicated TTY
 # wlr-randr applies rotation after cage has started
-ExecStart=/bin/sh -c '(sleep 3 && wlr-randr --output HDMI-A-1 --transform {{ display_rotation }}) & exec /usr/bin/cage -- {{ servo_install_dir }}/servo --webdriver={{ webdriver_port }} --no-native-titlebar {{ kiosk_url }}'
+ExecStart=/bin/sh -c '(sleep 3 && wlr-randr --output HDMI-A-1 --transform {{ display_rotation }}) & exec /usr/bin/cage -- /usr/bin/firefox-esr --kiosk {{ kiosk_url }}'
 
 # Restart on crash — 5s delay to avoid rapid restart loops
 Restart=on-failure
